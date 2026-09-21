@@ -1,0 +1,15 @@
+{
+  "name": "blindtest-cloud-relay",
+  "version": "1.0.0",
+  "description": "Serveur Relais Cloud WebSocket pour Blind Test Entre Amis",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
