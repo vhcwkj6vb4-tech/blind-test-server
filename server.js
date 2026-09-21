@@ -1,7 +1,7 @@
 /**
  * Blind Test Entre Amis - Serveur Relais Cloud WebSocket
- * 100% autonome, zéro dépendance complexe (utilise uniquement 'ws' et 'http').
- * Déployable gratuitement en 1 clic sur Glitch, Render, Railway, etc.
+ * 100% autonome, z√©ro d√©pendance complexe (utilise uniquement 'ws' et 'http').
+ * D√©ployable gratuitement en 1 clic sur Glitch, Render, Railway, etc.
  */
 
 const http = require('http');
@@ -9,7 +9,7 @@ const WebSocket = require('ws');
 
 const PORT = process.env.PORT || 3000;
 
-// Stockage des salons en mémoire : { roomCode: { hostWs: ws, clients: Set<ws>, track: {}, scores: {} } }
+// Stockage des salons en m√©moire : { roomCode: { hostWs: ws, clients: Set<ws>, track: {}, scores: {} } }
 const rooms = new Map();
 
 function generateRoomCode() {
@@ -41,14 +41,14 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Création de salon par API REST
+  // Cr√©ation de salon par API REST
   if (url.pathname === '/api/rooms' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', () => {
       const code = generateRoomCode();
       rooms.set(code, { hostWs: null, clients: new Set(), players: new Map() });
-      console.log(`[REST] Nouveau salon créé : ${code}`);
+      console.log(`[REST] Nouveau salon cr√©√© : ${code}`);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ code: code, status: 'created' }));
     });
@@ -58,14 +58,11 @@ const server = http.createServer((req, res) => {
   // Info salon par API REST
   if (url.pathname.startsWith('/api/rooms/')) {
     const code = url.pathname.split('/').pop().toUpperCase();
-    if (rooms.has(code)) {
-      const r = rooms.get(code);
+    const room = rooms.get(code);
+    if (room) {
+      const playersList = Array.from(room.players.values());
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        code: code,
-        playerCount: r.clients.size,
-        hasHost: !!r.hostWs
-      }));
+      res.end(JSON.stringify({ code, players: playersList }));
     } else {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Room not found' }));
@@ -74,179 +71,210 @@ const server = http.createServer((req, res) => {
   }
 
   res.writeHead(404);
-  res.end();
+  res.end('Not found');
 });
 
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocket.Server({ server, path: '/ws' });
 
 wss.on('connection', (ws) => {
-  let userRoomCode = null;
-  let userRole = null;
-  let userName = null;
+  ws.isAlive = true;
+  ws.roomCode = null;
+  ws.playerName = null;
+  ws.isHost = false;
+
+  ws.on('pong', () => { ws.isAlive = true; });
 
   ws.on('message', (message) => {
-    let data;
     try {
-      data = JSON.parse(message);
+      const data = JSON.parse(message);
+      handleMessage(ws, data);
     } catch (e) {
-      console.error('JSON invalide reçu:', message);
-      return;
-    }
-
-    const type = data.type;
-
-    // --- ENREGISTREMENT DE L'HÔTE ---
-    if (type === 'register_host') {
-      const code = (data.code || generateRoomCode()).toUpperCase();
-      userRoomCode = code;
-      userRole = 'host';
-      
-      let room = rooms.get(code);
-      if (!room) {
-        room = { hostWs: ws, clients: new Set(), players: new Map(), currentTrack: null };
-        rooms.set(code, room);
-      } else {
-        room.hostWs = ws;
-      }
-      
-      console.log(`[Hôte connecté] Salon ${code}`);
-      ws.send(JSON.stringify({ type: 'host_registered', code: code }));
-      return;
-    }
-
-    // --- CONNEXION D'UN JOUEUR / BUZZER ---
-    if (type === 'join') {
-      const code = (data.room || data.code || '').toUpperCase();
-      userName = data.name || 'Joueur';
-      userRoomCode = code;
-      userRole = 'player';
-
-      let room = rooms.get(code);
-      if (!room) {
-        // Crée le salon au vol si non existant
-        room = { hostWs: null, clients: new Set(), players: new Map(), currentTrack: null };
-        rooms.set(code, room);
-      }
-
-      room.clients.add(ws);
-      room.players.set(ws, userName);
-      console.log(`[Joueur connecté] ${userName} a rejoint le salon ${code} (${room.clients.size} joueurs)`);
-
-      // Confirmer au joueur qu'il est bien dans le salon
-      ws.send(JSON.stringify({
-        type: 'joined',
-        room: code,
-        name: userName,
-        currentTrack: room.currentTrack || null
-      }));
-
-      // Avertir l'hôte qu'un joueur a rejoint
-      if (room.hostWs && room.hostWs.readyState === WebSocket.OPEN) {
-        room.hostWs.send(JSON.stringify({
-          type: 'player_joined',
-          name: userName,
-          playerCount: room.clients.size
-        }));
-      }
-      return;
-    }
-
-    // --- ACTIONS D'UN JOUEUR (BUZZER) ---
-    if (type === 'buzz') {
-      const code = (data.room || userRoomCode || '').toUpperCase();
-      const room = rooms.get(code);
-      if (!room) return;
-
-      const buzzerName = data.name || userName || 'Un joueur';
-      console.log(`[BUZZ !] ${buzzerName} dans le salon ${code}`);
-
-      const buzzMsg = JSON.stringify({
-        type: 'buzzer_pressed',
-        name: buzzerName,
-        timestamp: Date.now()
-      });
-
-      // Transmettre à l'hôte
-      if (room.hostWs && room.hostWs.readyState === WebSocket.OPEN) {
-        room.hostWs.send(buzzMsg);
-      }
-      // Re-diffuser à tous les joueurs (pour bloquer leurs buzzers)
-      for (const client of room.clients) {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(buzzMsg);
-        }
-      }
-      return;
-    }
-
-    // --- ACTIONS DE L'HÔTE (DIFFUSION AUX JOUEURS) ---
-    // (track_update, start_round, scores_update, reset, etc.)
-    const code = (data.room || userRoomCode || '').toUpperCase();
-    const room = rooms.get(code);
-
-    if (room) {
-      if (type === 'track_update') {
-        room.currentTrack = data.track;
-      }
-
-      // Diffuser le message à tous les joueurs connectés au salon
-      const broadcastMsg = JSON.stringify(data);
-      for (const client of room.clients) {
-        if (client.readyState === WebSocket.OPEN && client !== ws) {
-          client.send(broadcastMsg);
-        }
-      }
-
-      // Si le message vient d'un joueur (ex: points/score) et doit aller à l'hôte
-      if (ws !== room.hostWs && room.hostWs && room.hostWs.readyState === WebSocket.OPEN) {
-        room.hostWs.send(broadcastMsg);
-      }
+      console.error('Message JSON invalide:', e);
     }
   });
 
   ws.on('close', () => {
-    if (!userRoomCode) return;
-    const room = rooms.get(userRoomCode);
-    if (!room) return;
-
-    if (userRole === 'host') {
-      console.log(`[Hôte déconnecté] Salon ${userRoomCode}`);
-      room.hostWs = null;
-      // Notifier les joueurs si nécessaire
-      for (const client of room.clients) {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify({ type: 'host_disconnected' }));
-        }
-      }
-    } else if (userRole === 'player') {
-      room.clients.delete(ws);
-      room.players.delete(ws);
-      console.log(`[Joueur parti] ${userName || 'Inconnu'} du salon ${userRoomCode} (reste ${room.clients.size})`);
-      if (room.hostWs && room.hostWs.readyState === WebSocket.OPEN) {
-        room.hostWs.send(JSON.stringify({
-          type: 'player_left',
-          name: userName,
-          playerCount: room.clients.size
-        }));
-      }
-    }
-
-    // Nettoyage si salon complètement vide
-    if (!room.hostWs && room.clients.size === 0) {
-      rooms.delete(userRoomCode);
-      console.log(`[Salon supprimé] ${userRoomCode} car vide.`);
-    }
-  });
-
-  ws.on('error', (err) => {
-    console.error('Erreur WebSocket client:', err.message);
+    handleDisconnect(ws);
   });
 });
 
+function getOrCreateRoom(code) {
+  let room = rooms.get(code);
+  if (!room) {
+    room = { hostWs: null, clients: new Set(), players: new Map() };
+    rooms.set(code, room);
+  }
+  return room;
+}
+
+function broadcastToRoom(room, payload, excludeWs = null) {
+  const msg = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  for (const client of room.clients) {
+    if (client !== excludeWs && client.readyState === WebSocket.OPEN) {
+      client.send(msg);
+    }
+  }
+}
+
+function handleMessage(ws, data) {
+  const type = data.type;
+  const roomCode = (data.code || data.room || '').toUpperCase().trim();
+
+  if (!roomCode && type !== 'ping') return;
+  const room = getOrCreateRoom(roomCode);
+
+  switch (type) {
+    // 1. Inscription H√¥te ou Joueur
+    case 'join':
+    case 'host_register': {
+      const isHost = data.isHost === true || data.role === 'host' || type === 'host_register';
+      const name = (data.playerName || data.name || (isHost ? 'Moi (H√¥te)' : 'Joueur')).trim();
+      
+      ws.roomCode = roomCode;
+      ws.playerName = name;
+      ws.isHost = isHost;
+      room.clients.add(ws);
+
+      if (isHost) {
+        room.hostWs = ws;
+        ws.send(JSON.stringify({ type: 'host_confirmed', room: roomCode, code: roomCode }));
+        console.log(`[Host] Salon ${roomCode} connect√© par ${name}`);
+      } else {
+        room.players.set(name, { name, score: 0.0, color: data.color || '#38bdf8' });
+        ws.send(JSON.stringify({ type: 'join_confirmed', room: roomCode, code: roomCode, name }));
+        console.log(`[Joueur] ${name} a rejoint le salon ${roomCode}`);
+      }
+
+      // Diffusion de la liste mise √† jour des joueurs √† tous les clients du salon
+      const playersList = Array.from(room.players.values());
+      broadcastToRoom(room, {
+        type: 'room_state',
+        room: {
+          code: roomCode,
+          players: playersList
+        },
+        players: playersList
+      });
+      break;
+    }
+
+    // 2. Un joueur ou l'h√¥te buzze !
+    case 'buzz': {
+      const name = (data.playerName || data.name || ws.playerName || 'Anonyme').trim();
+      const reactionMs = data.clientTime || 0;
+      console.log(`[Buzz] üö® ${name} a buzz√© dans le salon ${roomCode} (${reactionMs} ms)`);
+      
+      const payload = {
+        type: 'buzzer_pressed',
+        room: roomCode,
+        code: roomCode,
+        name: name,
+        playerName: name,
+        winner: {
+          name: name,
+          playerName: name,
+          reactionMs: reactionMs,
+          timestamp: new Date().toISOString()
+        }
+      };
+      // Diffusion imm√©diate √† tout le salon (H√¥te + tous les joueurs)
+      broadcastToRoom(room, payload);
+      break;
+    }
+
+    // 3. Mise √† jour du morceau (Deezer / Disney)
+    case 'track_update':
+    case 'start_round': {
+      console.log(`[Musique] üéµ Nouvelle manche / morceau dans le salon ${roomCode} : ${data.songTitle || ''}`);
+      broadcastToRoom(room, data);
+      break;
+    }
+
+    // 4. Attribution d'un score (0, 0.5, 1 pt)
+    case 'submit_score':
+    case 'score': {
+      const name = (data.playerName || data.name || '').trim();
+      const pts = Number(data.points ?? 0);
+      if (name && room.players.has(name)) {
+        const p = room.players.get(name);
+        p.score = Math.max(0, p.score + pts);
+      }
+      console.log(`[Score] üèÜ ${name} : ${pts} pt(s) dans le salon ${roomCode}`);
+      broadcastToRoom(room, data);
+      break;
+    }
+
+    // 5. Mise √† jour compl√®te des scores par l'h√¥te
+    case 'scores_update':
+    case 'scores': {
+      broadcastToRoom(room, data);
+      break;
+    }
+
+    // 6. R√©armement / Reset des buzzers pour le morceau suivant
+    case 'reset': {
+      console.log(`[Reset] üîÑ R√©armement du salon ${roomCode}`);
+      broadcastToRoom(room, { type: 'reset', room: roomCode, code: roomCode });
+      break;
+    }
+
+    // 7. Commandes musicales du joueur vers l'h√¥te
+    case 'resume_music':
+    case 'next_track': {
+      if (room.hostWs && room.hostWs.readyState === WebSocket.OPEN) {
+        room.hostWs.send(JSON.stringify(data));
+      }
+      break;
+    }
+
+    case 'ping': {
+      ws.send(JSON.stringify({ type: 'pong' }));
+      break;
+    }
+
+    default: {
+      // Relais transparent de tout autre √©v√©nement aux membres du salon
+      broadcastToRoom(room, data, ws);
+      break;
+    }
+  }
+}
+
+function handleDisconnect(ws) {
+  if (!ws.roomCode) return;
+  const room = rooms.get(ws.roomCode);
+  if (!room) return;
+
+  room.clients.delete(ws);
+
+  if (ws.isHost) {
+    console.log(`[Host] H√¥te d√©connect√© du salon ${ws.roomCode}`);
+  } else if (ws.playerName) {
+    room.players.delete(ws.playerName);
+    console.log(`[Joueur] ${ws.playerName} a quitt√© le salon ${ws.roomCode}`);
+    const playersList = Array.from(room.players.values());
+    broadcastToRoom(room, {
+      type: 'room_state',
+      room: { code: ws.roomCode, players: playersList },
+      players: playersList
+    });
+  }
+
+  // Nettoyage du salon s'il est compl√®tement vide
+  if (room.clients.size === 0) {
+    rooms.delete(ws.roomCode);
+  }
+}
+
+// Heartbeat 30s
+setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (!ws.isAlive) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 30000);
+
 server.listen(PORT, () => {
-  console.log(`=============================================`);
-  console.log(` Serveur Blind Test Relais démarré !`);
-  console.log(` Port d'écoute : ${PORT}`);
-  console.log(` Prêt à relayer les buzzers en temps réel.`);
-  console.log(`=============================================`);
+  console.log(`üöÄ Serveur Relais Cloud Blind Test en ligne sur le port ${PORT}`);
 });
