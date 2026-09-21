@@ -101,7 +101,13 @@ wss.on('connection', (ws) => {
 function getOrCreateRoom(code) {
   let room = rooms.get(code);
   if (!room) {
-    room = { hostWs: null, clients: new Set(), players: new Map() };
+    room = {
+      hostWs: null,
+      clients: new Set(),
+      players: new Map(),
+      currentWinner: null,
+      lockedPlayers: new Set()
+    };
     rooms.set(code, room);
   }
   return room;
@@ -162,7 +168,23 @@ function handleMessage(ws, data) {
     case 'buzz': {
       const name = (data.playerName || data.name || ws.playerName || 'Anonyme').trim();
       const reactionMs = data.clientTime || 0;
-      console.log(`[Buzz] üö® ${name} a buzz√© dans le salon ${roomCode} (${reactionMs} ms)`);
+
+      // R√®gle 1 : Si un vainqueur est d√©j√† enregistr√© sur cette manche, bloquer tout buzz concurrent
+      if (room.currentWinner !== null) {
+        console.log(`[Buzz Ignor√©] ‚õîÔ∏è ${name} a buzz√© trop tard (Vainqueur d√©j√† valid√© : ${room.currentWinner})`);
+        return;
+      }
+
+      // R√®gle 2 : Un joueur ne peut pas buzzer 2 fois sur le m√™me morceau
+      if (room.lockedPlayers.has(name)) {
+        console.log(`[Buzz Ignor√©] ‚õîÔ∏è ${name} a d√©j√† buzz√© sur ce morceau !`);
+        return;
+      }
+
+      // Arbitrage strict du vainqueur unique
+      room.currentWinner = name;
+      room.lockedPlayers.add(name);
+      console.log(`[Buzz Valid√© !] üëë ${name} est le vainqueur unique dans le salon ${roomCode} (${reactionMs} ms)`);
       
       const payload = {
         type: 'buzzer_pressed',
@@ -186,6 +208,8 @@ function handleMessage(ws, data) {
     case 'track_update':
     case 'start_round': {
       console.log(`[Musique] üéµ Nouvelle manche / morceau dans le salon ${roomCode} : ${data.songTitle || ''}`);
+      room.currentWinner = null;
+      room.lockedPlayers.clear();
       broadcastToRoom(room, data);
       break;
     }
@@ -211,16 +235,31 @@ function handleMessage(ws, data) {
       break;
     }
 
-    // 6. R√©armement / Reset des buzzers pour le morceau suivant
+    // 6. R√©armement / Reset des buzzers pour le morceau suivant ou relance
     case 'reset': {
       console.log(`[Reset] üîÑ R√©armement du salon ${roomCode}`);
+      room.currentWinner = null;
+      // Note : on ne vide PAS lockedPlayers ici pour laisser le joueur pr√©c√©dent bloqu√© si on relance pour les autres
       broadcastToRoom(room, { type: 'reset', room: roomCode, code: roomCode });
       break;
     }
 
     // 7. Commandes musicales du joueur vers l'h√¥te
-    case 'resume_music':
+    case 'resume_music': {
+      console.log(`[Relance Musique] ‚ñ∂Ô∏è Demand√©e par ${ws.playerName || 'joueur'} dans le salon ${roomCode}`);
+      room.currentWinner = null;
+      // Diffuse le reset pour d√©bloquer les AUTRES joueurs
+      broadcastToRoom(room, { type: 'reset', room: roomCode, code: roomCode });
+      if (room.hostWs && room.hostWs.readyState === WebSocket.OPEN) {
+        room.hostWs.send(JSON.stringify(data));
+      }
+      break;
+    }
+
     case 'next_track': {
+      console.log(`[Morceau Suivant] ‚è≠Ô∏è Demand√© par ${ws.playerName || 'joueur'} dans le salon ${roomCode}`);
+      room.currentWinner = null;
+      room.lockedPlayers.clear();
       if (room.hostWs && room.hostWs.readyState === WebSocket.OPEN) {
         room.hostWs.send(JSON.stringify(data));
       }
