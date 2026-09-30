@@ -52,6 +52,20 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 2. Politique de confidentialit√© requise par Apple App Store
+  if (url.pathname === '/privacy' || url.pathname === '/politique-de-confidentialite') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Politique de Confidentialit√© - Blind Test entre amis</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:700px;margin:40px auto;padding:0 20px;line-height:1.6;color:#1e293b;background:#f8fafc;}h1{color:#0f172a;}h2{margin-top:24px;color:#334155;}</style></head><body><h1>Politique de Confidentialit√©</h1><p>Derni√®re mise √† jour : Septembre 2026</p><h2>1. Collecte des Donn√©es</h2><p>L'application <strong>Blind Test entre amis</strong> respecte la vie priv√©e de ses utilisateurs. Aucune donn√©e personnelle nominative, bancaire ou de localisation n'est collect√©e, vendue ou transmise √† des tiers.</p><h2>2. Donn√©es en session de jeu</h2><p>Les pseudonymes saisis pour rejoindre un salon de jeu sont strictement √©ph√©m√®res, stock√©s temporairement en m√©moire vive pour le calcul des scores de la partie, et sont automatiquement supprim√©s √† la fermeture du salon.</p><h2>3. Autorisations requises</h2><p>L'application utilise uniquement le r√©seau local et Internet pour permettre la communication en temps r√©el entre les smartphones des joueurs et l'h√¥te.</p><h2>4. Contact</h2><p>Pour toute question : achille.aubrun@gmail.com</p></body></html>`);
+    return;
+  }
+
+  // 3. Page Support & Assistance requise par Apple App Store
+  if (url.pathname === '/support') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Support - Blind Test entre amis</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:700px;margin:40px auto;padding:0 20px;line-height:1.6;color:#1e293b;background:#f8fafc;}h1{color:#0f172a;}</style></head><body><h1>Support & Assistance</h1><p>Une question ou un probl√®me concernant l'application <strong>Blind Test entre amis</strong> ?</p><p>Contactez le support par email : <a href="mailto:achille.aubrun@gmail.com">achille.aubrun@gmail.com</a></p><p>Nous vous r√©pondrons dans les plus brefs d√©lais !</p></body></html>`);
+    return;
+  }
+
   // Cr√©ation de salon par API REST
   if (url.pathname === '/api/rooms' && req.method === 'POST') {
     let body = '';
